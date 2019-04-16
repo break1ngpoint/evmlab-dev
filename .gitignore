@@ -4,5 +4,7 @@ output/*.json
 output/*.zip
 tracerLogs/*.log.txt
 tracerLogs/*.trace.log
+*.egg-info/
+.idea/
 
 .api_cache

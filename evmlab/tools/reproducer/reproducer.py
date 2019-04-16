@@ -6,6 +6,7 @@ import re
 import zipfile
 import tempfile
 import logging
+import time, signal
 
 from evmlab import reproduce, utils
 from evmlab import vm as VMUtils
@@ -20,7 +21,7 @@ except ImportError:
     logger.warning("Flask not installed, disabling web mode")
     app = None
 
-OUTPUT_DIR = tempfile.mkdtemp(prefix="evmlab")
+# OUTPUT_DIR = tempfile.mkdtemp(prefix="evmlab")
 
 
 def create_zip_archive(input_files, output_archive):
@@ -108,6 +109,10 @@ def test(vm, api):
     return reproduce.reproduceTx(tx, vm, api)
 
 
+def timeout_handler(_signum, _frame):
+    raise RuntimeError('Timeout.')
+
+
 def main():
     description = """
 Tool to reproduce on-chain events locally. 
@@ -158,9 +163,20 @@ Unfinished:
     web3settings.add_argument("--web3", type=str, default="https://mainnet.infura.io/",
                               help="Web3 API url to fetch info from (default 'https://mainnet.infura.io/'")
 
+    parser.add_argument('-c', '--code', type=str, required=True,
+                        help='Code file')
+    parser.add_argument('-o', '--output', type=str, required=True,
+                        help='Output file')
+    parser.add_argument('--timeout', type=int, default=60,
+                        help='Timeout in seconds (default to 60 seconds)')
+
     args = parser.parse_args()
 
     # end of arg handling
+
+    if hasattr(signal, 'SIGALRM'):
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(args.timeout)
 
     if args.parity_evm:
         vm = VMUtils.ParityVM(args.parity_evm, not args.no_docker)
@@ -189,44 +205,48 @@ Unfinished:
         app.run(host=host, port=port)
 
     elif args.hash:
-        artefacts, vm_args = reproduce.reproduceTx(args.hash, vm, api)
-        saved_files = utils.saveFiles(OUTPUT_DIR, artefacts)
-
-        # Some tricks to get the right command for local replay
-        p_gen = saved_files['parity genesis']['name']
-        g_gen = saved_files['geth genesis']['name']
-        vm_args['genesis'] = "%s/%s" % (OUTPUT_DIR, g_gen)
-
-        print("\nCommand to execute locally (geth):\n")
-        print("%s" % " ".join(vm.makeCommand(**vm_args)))
-        print("\nWith memory:\n")
-        vm_args['memory'] = True
-        print("%s" % " ".join(vm.makeCommand(**vm_args)))
-        vm_args.pop('json', None)
-        vm_args.pop('memory', None)
-        vm_args['statdump'] = "true"
-        print("\nFor benchmarking:\n")
-        print("%s" % " ".join(vm.makeCommand(**vm_args)))
-
-        print("\nFor opviewing:\n")
-        print("python3 opviewer.py -f %s/%s" % (saved_files['json-trace']['path'], saved_files['json-trace']['name']))
-
-        print("\nFor opviewing with sources:\n")
-        print(
-            "python3 opviewer.py -f %s/%s --web3 '%s' -s path_to_contract_dir -j path_to_solc_combined_json --hash %s" % (
-            saved_files['json-trace']['path'], saved_files['json-trace']['name'], args.web3, args.hash))
-
-        logger.debug("creating zip archive for artefacts")
-        prefix = args.hash[:8]
-        output_archive = os.path.join(OUTPUT_DIR, "%s.zip" % prefix)
-        # create a list of files to pack with zipFiles
-        input_files = [(os.path.join(v['path'], v['name']), v['name']) for v in saved_files]
-        create_zip_archive(input_files=input_files, output_archive=output_archive)
-
-        print("\nZipped files into %s" % output_archive)
+        # artefacts, vm_args = reproduce.reproduceTx(args.hash, vm, api)
+        reproduce.reproduceTx(args.hash, vm, api, args.code, args.output)
+        # saved_files = utils.saveFiles(OUTPUT_DIR, artefacts)
+        #
+        # # Some tricks to get the right command for local replay
+        # p_gen = saved_files['parity genesis']['name']
+        # g_gen = saved_files['geth genesis']['name']
+        # vm_args['genesis'] = "%s/%s" % (OUTPUT_DIR, g_gen)
+        #
+        # print("\nCommand to execute locally (geth):\n")
+        # print("%s" % " ".join(vm.makeCommand(**vm_args)))
+        # print("\nWith memory:\n")
+        # vm_args['memory'] = True
+        # print("%s" % " ".join(vm.makeCommand(**vm_args)))
+        # vm_args.pop('json', None)
+        # vm_args.pop('memory', None)
+        # vm_args['statdump'] = "true"
+        # print("\nFor benchmarking:\n")
+        # print("%s" % " ".join(vm.makeCommand(**vm_args)))
+        #
+        # print("\nFor opviewing:\n")
+        # print("python3 opviewer.py -f %s/%s" % (saved_files['json-trace']['path'], saved_files['json-trace']['name']))
+        #
+        # print("\nFor opviewing with sources:\n")
+        # print(
+        #     "python3 opviewer.py -f %s/%s --web3 '%s' -s path_to_contract_dir -j path_to_solc_combined_json --hash %s" % (
+        #     saved_files['json-trace']['path'], saved_files['json-trace']['name'], args.web3, args.hash))
+        #
+        # logger.debug("creating zip archive for artefacts")
+        # prefix = args.hash[:8]
+        # output_archive = os.path.join(OUTPUT_DIR, "%s.zip" % prefix)
+        # # create a list of files to pack with zipFiles
+        # input_files = [(os.path.join(v['path'], v['name']), v['name']) for v in saved_files]
+        # create_zip_archive(input_files=input_files, output_archive=output_archive)
+        #
+        # print("\nZipped files into %s" % output_archive)
 
     else:
         parser.print_usage()
+
+    if callable(getattr(signal, 'alarm', None)):
+        signal.alarm(0)
 
 
 if __name__ == '__main__':

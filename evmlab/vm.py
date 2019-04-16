@@ -394,6 +394,8 @@ class GethVM(VM):
             cmd.append("--statdump")
         if get('create'):
             cmd.append("--create")
+        if get('dump'):
+            cmd.append("--dump")
 
         cmd.append("run")
 

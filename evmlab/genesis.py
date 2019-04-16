@@ -232,9 +232,10 @@ class Genesis(object):
 
     def export(self,prefix="genesis"):
         geth_genesis = self.export_geth(prefix="%s-genesis-geth_" % prefix)
-        parity_genesis = self.export_parity(prefix="%s-genesis-parity_" % prefix)
-        
-        return (geth_genesis, parity_genesis)
+        # parity_genesis = self.export_parity(prefix="%s-genesis-parity_" % prefix)
+
+        # return (geth_genesis, parity_genesis)
+        return geth_genesis
 
     def export_geth(self, prefix = None):
         temp_path = mktemp(prefix = prefix, suffix=".json")

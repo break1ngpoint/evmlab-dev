@@ -5,3 +5,7 @@ urwid
 eth-hash[pycryptodome]
 rlp>=1.0
 docker==3.0.0
+evmdasm
+evmcodegen
+ethereum_input_decoder
+hexbytes

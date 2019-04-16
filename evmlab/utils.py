@@ -9,7 +9,7 @@ def getApi(url):
     return multiapi.MultiApi(web3 = web3, etherchain = chain)
 
 def checksumAddress(lcAddress):
-    return Web3.toChecksumAddress(lcAddress)
+    return Web3.toChecksumAddress('0x' + lcAddress[2:].zfill(40))
 
 
 def saveFiles(destination, artefacts):

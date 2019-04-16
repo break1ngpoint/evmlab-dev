@@ -27,13 +27,20 @@ from . import utils
 
 def findExternalCalls(list_of_output):
     externals = {
-                "CALL"         : lambda o : o['stack'][-2], 
-                "CALLCODE"     : lambda o : o['stack'][-2], 
-                "DELEGATECALL" : lambda o : o['stack'][-2], 
-                "STATICCALL"   : lambda o : o['stack'][-2], 
-                "EXTCODECOPY"  : lambda o : o['stack'][-1],
-                "EXTCODESIZE"  : lambda o : o['stack'][-1],
-                "BALANCE"      : lambda o : o['stack'][-1],
+                # "CALL"         : lambda o : o['stack'][-2],
+                # "CALLCODE"     : lambda o : o['stack'][-2],
+                # "DELEGATECALL" : lambda o : o['stack'][-2],
+                # "STATICCALL"   : lambda o : o['stack'][-2],
+                # "EXTCODECOPY"  : lambda o : o['stack'][-1],
+                # "EXTCODESIZE"  : lambda o : o['stack'][-1],
+                # "BALANCE"      : lambda o : o['stack'][-1],
+                "CALL"         : lambda o : utils.checksumAddress(o['stack'][-2]),
+                "CALLCODE"     : lambda o : utils.checksumAddress(o['stack'][-2]),
+                "DELEGATECALL" : lambda o : utils.checksumAddress(o['stack'][-2]),
+                "STATICCALL"   : lambda o : utils.checksumAddress(o['stack'][-2]),
+                "EXTCODECOPY"  : lambda o : utils.checksumAddress(o['stack'][-1]),
+                "EXTCODESIZE"  : lambda o : utils.checksumAddress(o['stack'][-1]),
+                "BALANCE"      : lambda o : utils.checksumAddress(o['stack'][-1]),
                 }
     accounts = set()
     for l in list_of_output:
@@ -101,7 +108,8 @@ def findStorageLookups(list_of_output, original_context):
         if cur_address and (o['opName'] in ['SLOAD','SSTORE'] or o['op'] in [0x54, 0x55]):
 
             key  = o['stack'][-1]
-            entry = (cur_address, key)
+            # entry = (cur_address, key)
+            entry = (utils.checksumAddress(cur_address), key)
             refs.add(entry)
 
         prev_op = o
@@ -115,14 +123,17 @@ def debugdump(obj):
     pprint.PrettyPrinter().pprint(obj)
 
 
-def reproduceTx(txhash, vm, api):
+# def reproduceTx(txhash, vm, api):
+def reproduceTx(txhash, vm, api, code_file, output_file):
 
     genesis = gen.Genesis()
     
     tx = api.getTransaction(txhash)
 
-    s = tx['from']
-    r = tx['to']
+    # s = tx['from']
+    # r = tx['to']
+    s = utils.checksumAddress(tx['from'])
+    r = utils.checksumAddress(tx['to'])
     tx['input'] = tx['input'][2:]
 
     if r == '0x0':
@@ -159,7 +170,8 @@ def reproduceTx(txhash, vm, api):
         done = True
         # Add accounts that we know of 
         for addr in list(externals_tofetch):
-            acc = api.getAccountInfo( addr , blnum - 1)  # need to load accountInfo at block before tx
+            # acc = api.getAccountInfo( addr , blnum - 1)  # need to load accountInfo at block before tx
+            acc = api.getAccountInfo(addr, addr == r, code_file, blnum - 1)
             genesis.add(acc)
             #debugdump(acc)
             done = False
@@ -173,10 +185,11 @@ def reproduceTx(txhash, vm, api):
             done = False
         storage_slots_fetched.update(slots_to_fetch)
         
-        (g_path, p_path) = genesis.export(txhash[:8])
-        genesis_path = g_path
-        if vm.genesis_format == 'parity':
-            genesis_path = p_path
+        # (g_path, p_path) = genesis.export(txhash[:8])
+        # genesis_path = g_path
+        # if vm.genesis_format == 'parity':
+        #     genesis_path = p_path
+        genesis_path = genesis.export(txhash[:8])
 
         vm_args = {
             "receiver"  : r,
@@ -187,24 +200,35 @@ def reproduceTx(txhash, vm, api):
             "gas"       : tx['gas'], 
             "memory"    : False,
             "create"    : create,
+            "dump"      : False,
         }
         if not done:
             print("Executing tx...")
         else:
             #One final trace with memory on, makes for better annotated trace
             print("Final execution (memory on)")
-            vm_args['memory'] = True
+            # vm_args['memory'] = True
+            vm_args['dump'] = True
 
         # We could use the following to set the code for parity:
         #receivercode = genesis.codeAt(r)
         #print(tx)
         output =  vm.execute(**vm_args)
 
-        fd, temp_path = tempfile.mkstemp( prefix=txhash[:8]+'_', suffix=".txt")
-        with open(temp_path, 'w') as f :
-            f.write("\n".join(output))
-            print("Saved trace to %s" % temp_path)
-        os.close(fd)
+        # fd, temp_path = tempfile.mkstemp(prefix=txhash[:8] + '_', suffix=".txt")
+        # with open(temp_path, 'w') as f:
+        #     f.write("\n".join(output))
+        #     print("Saved trace to %s" % temp_path)
+        # os.close(fd)
+        if done:
+            with open(output_file, 'w') as f:
+                content = ''
+                for idx, line in enumerate(output):
+                    if idx != 0 and line[0] == '{':
+                        content += ','
+                    content += line.strip()
+                content = '[' + content + ']'
+                f.write(content)
 
         if not done:
             # External accounts to lookup
@@ -219,27 +243,29 @@ def reproduceTx(txhash, vm, api):
             if len(slots_to_fetch) > 0:
                 print("SLOTS to fetch: %s " % slots_to_fetch)
 
+        if os.path.exists(genesis_path):
+            os.remove(genesis_path)
 
-    artefacts = {
-        'geth genesis'   : g_path, 
-        'parity genesis' : p_path, 
-        'json-trace': temp_path}
-
-    try:
-        annotated_trace = evmtrace.traceEvmOutput(temp_path)
-        fd, a_trace = tempfile.mkstemp( prefix=txhash[:8]+'_', suffix=".evmtrace.txt")
-        with open(a_trace, 'w') as f :
-            f.write(str(annotated_trace))
-        os.close(fd)
-        artefacts['annotated trace'] = a_trace
-
-    except Exception as e:
-        print("Evmtracing failed")
-        traceback.print_exc()
-
-    print("vm args:")
-    print(vm_args)
-    return artefacts, vm_args
+    # artefacts = {
+    #     'geth genesis'   : g_path,
+    #     'parity genesis' : p_path,
+    #     'json-trace': temp_path}
+    #
+    # try:
+    #     annotated_trace = evmtrace.traceEvmOutput(temp_path)
+    #     fd, a_trace = tempfile.mkstemp( prefix=txhash[:8]+'_', suffix=".evmtrace.txt")
+    #     with open(a_trace, 'w') as f :
+    #         f.write(str(annotated_trace))
+    #     os.close(fd)
+    #     artefacts['annotated trace'] = a_trace
+    #
+    # except Exception as e:
+    #     print("Evmtracing failed")
+    #     traceback.print_exc()
+    #
+    # print("vm args:")
+    # print(vm_args)
+    # return artefacts, vm_args
 
 def testStoreLookup():
     tr = "/data/workspace/evmlab/0xd6d519043d40691a36c9e718e47110309590e6f47084ac0ec00b53718e449fd3_der80goh.txt"
